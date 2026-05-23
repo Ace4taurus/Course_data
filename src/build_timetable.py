@@ -4,7 +4,16 @@ import argparse
 import json
 from pathlib import Path
 
-from sjtu_course_analysis.scheduler import build_timetable, format_result, load_input_config, parse_max_early_classes, result_to_dict
+from sjtu_course_analysis.scheduler import (
+    c,
+    build_timetable,
+    fetch_reviews,
+    format_result,
+    format_reviews,
+    load_input_config,
+    parse_max_early_classes,
+    result_to_dict,
+)
 
 
 DEFAULT_INPUT = Path("input/input.json")
@@ -27,18 +36,49 @@ def read_max_early_classes(input_path: Path, debug_mode: bool) -> int | None:
         return parse_max_early_classes(load_input_config(input_path))
 
     while True:
-        value = input("早八课程数量最多允许多少门？直接回车表示不限制：").strip()
+        value = input(c("早八课程数量最多允许多少门？直接回车表示不限制：", "cyan", True)).strip()
         if not value:
             return None
         try:
             limit = int(value)
         except ValueError:
-            print("请输入非负整数，或直接回车表示不限制。")
+            print(c("请输入非负整数，或直接回车表示不限制。", "yellow", True))
             continue
         if limit < 0:
-            print("请输入非负整数，或直接回车表示不限制。")
+            print(c("请输入非负整数，或直接回车表示不限制。", "yellow", True))
             continue
         return limit
+
+
+def review_loop(sqlite_path: Path, result) -> None:
+    if not result.selected:
+        return
+
+    while True:
+        value = input(c("请输入上方选课结果中的序号查看评论，或直接回车退出：", "cyan", True)).strip()
+        if not value:
+            return
+        try:
+            index = int(value)
+        except ValueError:
+            print(c("请输入有效序号，或直接回车退出。", "yellow", True))
+            continue
+        if index < 1 or index > len(result.selected):
+            print(c("序号超出范围。", "yellow", True))
+            continue
+
+        offering = result.selected[index - 1]
+        page = 1
+        while True:
+            reviews = fetch_reviews(sqlite_path, offering, limit=10, offset=(page - 1) * 10)
+            print("")
+            print(format_reviews(reviews, page=page, page_size=10, color=True))
+            if not reviews:
+                break
+            action = input(c("输入 n 查看下一页，输入其他内容返回序号输入，Ctrl+C 退出：", "cyan", True)).strip().lower()
+            if action not in {"n", "next", "下一页"}:
+                break
+            page += 1
 
 
 def main() -> None:
@@ -54,7 +94,8 @@ def main() -> None:
     if args.as_json:
         print(json.dumps(result_to_dict(result), ensure_ascii=False, indent=2))
     else:
-        print(format_result(result))
+        print(format_result(result, color=True))
+        review_loop(args.sqlite, result)
 
 
 if __name__ == "__main__":

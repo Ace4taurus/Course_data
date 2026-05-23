@@ -39,6 +39,18 @@ class SearchStats:
 
 
 @dataclass(frozen=True)
+class Review:
+    course_code: str
+    course_name: str
+    course_teacher: str
+    rating: float | None
+    score: str | None
+    semester_name: str | None
+    comment: str | None
+    modified_at: str | None
+
+
+@dataclass(frozen=True)
 class TimetableResult:
     status: str
     requested_courses: list[str]
@@ -399,19 +411,106 @@ def offering_to_dict(offering: Offering) -> dict[str, Any]:
     }
 
 
-def format_result(result: TimetableResult) -> str:
-    lines = [f"Status: {result.status}"]
+def fetch_reviews(sqlite_path: Path, offering: Offering, *, limit: int = 10, offset: int = 0) -> list[Review]:
+    query = """
+        SELECT
+            course_code,
+            course_name,
+            course_teacher,
+            rating,
+            score,
+            semester_name,
+            comment,
+            modified_at
+        FROM course_teacher_reviews
+        WHERE course_code = ?
+          AND course_teacher = ?
+        ORDER BY modified_at DESC
+        LIMIT ? OFFSET ?
+    """
+    with sqlite3.connect(sqlite_path) as connection:
+        rows = connection.execute(query, (offering.course_code, offering.teacher, limit, offset)).fetchall()
+
+    return [
+        Review(
+            course_code=row[0],
+            course_name=row[1],
+            course_teacher=row[2],
+            rating=row[3],
+            score=row[4],
+            semester_name=row[5],
+            comment=row[6],
+            modified_at=row[7],
+        )
+        for row in rows
+    ]
+
+
+COLORS = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "red": "\033[31m",
+    "cyan": "\033[36m",
+    "blue": "\033[34m",
+    "magenta": "\033[35m",
+    "header": "\033[1;36m",
+    "index": "\033[1;33m",
+}
+
+
+def c(text: str, style: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{COLORS[style]}{text}{COLORS['reset']}"
+
+
+def _color_rating(text: str, rating: float | None, enabled: bool) -> str:
+    if rating is None:
+        return c(text, "dim", enabled)
+    if rating >= 4.5:
+        return c(text, "green", enabled)
+    if rating >= 3.5:
+        return c(text, "yellow", enabled)
+    return c(text, "red", enabled)
+
+
+def format_reviews(reviews: list[Review], *, page: int, page_size: int = 10, color: bool = False) -> str:
+    if not reviews:
+        return "没有更多评论。"
+
+    lines = [c(f"评论第 {page} 页：", "header", color)]
+    start = (page - 1) * page_size
+    for index, review in enumerate(reviews, start=start + 1):
+        rating_text = "无评分" if review.rating is None else f"{review.rating:.1f}"
+        rating_colored = _color_rating(rating_text, review.rating, color)
+        semester = review.semester_name or "未知学期"
+        modified_at = review.modified_at or "未知时间"
+        comment = (review.comment or "").strip() or "无文字评论"
+        idx = c(str(index), "index", color)
+        sem = c(f"[{semester}]", "dim", color)
+        lines.append(f"{idx}. {sem} rating={rating_colored} score={review.score or '无'} updated={modified_at}")
+        lines.append(f"  {comment}")
+    return "\n".join(lines)
+
+
+def format_result(result: TimetableResult, *, color: bool = False) -> str:
+    status_style = "green" if result.status == "optimal" else "red"
+    lines = [f"{c('Status:', 'bold', color)} {c(result.status, status_style, color)}"]
     if result.missing_courses:
-        lines.append(f"Missing courses: {', '.join(result.missing_courses)}")
+        lines.append(f"{c('Missing courses:', 'red', color)} {', '.join(result.missing_courses)}")
     if result.total_score is not None and result.average_score is not None:
-        lines.append(f"Total score: {result.total_score:.3f}")
-        lines.append(f"Average score: {result.average_score:.3f}")
+        lines.append(f"{c('Total score:', 'bold', color)} {c(f'{result.total_score:.3f}', 'green', color)}")
+        lines.append(f"{c('Average score:', 'bold', color)} {c(f'{result.average_score:.3f}', 'green', color)}")
 
     early_limit = "unlimited" if result.max_early_classes is None else str(result.max_early_classes)
-    lines.append(f"Early classes: {result.early_class_count} / {early_limit}")
+    early_style = "green" if result.max_early_classes is None or result.early_class_count <= result.max_early_classes else "red"
+    lines.append(f"{c('Early classes:', 'bold', color)} {c(f'{result.early_class_count} / {early_limit}', early_style, color)}")
 
     lines.append(
-        "Stats: "
+        f"{c('Stats:', 'dim', color)} "
         f"raw={result.stats.raw_candidate_count}, "
         f"compressed={result.stats.compressed_candidate_count}, "
         f"visited_nodes={result.stats.visited_nodes}"
@@ -419,27 +518,28 @@ def format_result(result: TimetableResult) -> str:
 
     if result.stats.compressed_counts:
         counts = ", ".join(f"{course}={count}" for course, count in result.stats.compressed_counts.items())
-        lines.append(f"Compressed counts: {counts}")
+        lines.append(f"{c('Compressed counts:', 'dim', color)} {counts}")
 
     if result.selected:
         lines.append("")
-        lines.append("Selected offerings:")
-        for offering in result.selected:
-            rating = "unrated" if offering.avg_rating is None else f"{offering.avg_rating:.3f}"
+        lines.append(c("Selected offerings:", "header", color))
+        for index, offering in enumerate(result.selected, start=1):
+            rating_text = "unrated" if offering.avg_rating is None else f"{offering.avg_rating:.3f}"
+            rating = _color_rating(rating_text, offering.avg_rating, color)
             reviews = 0 if offering.review_count is None else offering.review_count
-            early = "yes" if offering.has_early_class else "no"
+            early = c("yes", "yellow", color) if offering.has_early_class else c("no", "green", color)
             lines.append(
-                f"- {offering.course_code} {offering.course_name} | "
-                f"{offering.teacher} | {offering.teaching_class} | "
-                f"rating={rating} reviews={reviews} early={early} | {offering.schedule_code}"
+                f"{c(str(index), 'index', color)}. {c(offering.course_code, 'cyan', color)} {offering.course_name} | "
+                f"{c(offering.teacher, 'magenta', color)} | {offering.teaching_class} | "
+                f"rating={rating} reviews={reviews} early={early} | {c(offering.schedule_code, 'dim', color)}"
             )
 
     if result.warnings:
         lines.append("")
-        lines.append("Warnings:")
+        lines.append(c("Warnings:", "yellow", color))
         for warning in result.warnings[:20]:
-            lines.append(f"- {warning}")
+            lines.append(f"- {c(warning, 'yellow', color)}")
         if len(result.warnings) > 20:
-            lines.append(f"- ... {len(result.warnings) - 20} more warnings")
+            lines.append(f"- {c(f'... {len(result.warnings) - 20} more warnings', 'yellow', color)}")
 
     return "\n".join(lines)
