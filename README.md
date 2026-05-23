@@ -1,51 +1,72 @@
-# SJTU 选课数据整理
+# SJTU 课程数据 SQLite
 
-本项目只保留数据抓取、清洗、聚合和存储，不包含分析报告、统计脚本或可视化产物。
+这个项目把 SJTU 课程评论和当前学期教学班数据整理进一个简单的 SQLite 数据库。
 
-## 目录结构
+## 主要文件
 
-- `data/raw/`
-  原始数据。
-- `data/processed/`
-  清洗和聚合后的数据。
-- `src/run_isolated_course_analysis.py`
-  主入口，负责抓取并整理数据。
-- `src/sjtu_course_analysis/course_plus.py`
-  `Course+` 课程数据抓取与清洗。
-- `src/sjtu_course_analysis/course_community.py`
-  选课社区登录、点评抓取与聚合。
+- `data/raw/history_all_terms/course_community_reviews_all_terms.csv`：历史课程评论
+- `data/processed/current_term_2025-2026_1/course_plus_offerings_2025-2026_1_cleaned.csv`：当前学期教学班
+- `data/processed/course_reviews_simple.sqlite`：生成后的 SQLite 数据库
+- `src/sqlite_basic_usage.ipynb`：SQLite 基础使用示例
 
-## 当前数据
+## 生成 SQLite
 
-- `data/raw/history_all_terms/course_community_reviews_all_terms.csv`
-  选课社区全历史逐条点评原始数据。
-- `data/processed/history_all_terms/course_community_courses_all_terms.csv`
-  选课社区全历史课程层聚合数据。
-- `data/raw/current_term_2025-2026_1/course_plus_raw_2025-2026_1.csv`
-  `2025-2026_1` 学期 `Course+` 原始课程数据。
-- `data/processed/current_term_2025-2026_1/course_plus_offerings_2025-2026_1.csv`
-  `2025-2026_1` 学期教学班层数据。
-- `data/processed/current_term_2025-2026_1/course_plus_courses_2025-2026_1.csv`
-  `2025-2026_1` 学期课程层聚合数据。
-- `data/processed/current_term_2025-2026_1/history_review_aggregate_reference.csv`
-  历史点评课程聚合参考表。
-- `data/processed/current_term_2025-2026_1/merged_current_courses_with_history_reviews_2025-2026_1.csv`
-  当前学期课程与历史点评聚合结果的合并表。
-
-## 运行方式
+先生成评论表：
 
 ```bash
-/opt/anaconda3/bin/python src/run_isolated_course_analysis.py \
-  --semester 2025-2026_1 \
-  --community-username YOUR_USERNAME \
-  --community-password YOUR_PASSWORD \
-  --community-login-mode email_password \
-  --community-transport curl \
-  --output-root .
+python src/build_simple_reviews_sqlite.py
 ```
 
-## 说明
+再导入当前学期教学班：
 
-- 当前仓库不保留任何分析报告或图表。
-- 评论正文只保存在 `data/raw/history_all_terms/`。
-- `score` 字段是原始字段，未做分析解释。
+```bash
+python src/ingest_course_plus.py
+```
+
+## SQLite 表
+
+`course_teacher_reviews`
+
+- 评论明细表
+- 可通过 `course_code` + `course_teacher` 查询某门课某位老师的所有评论
+
+`course_teacher_rating_summary`
+
+- 评论评分汇总表
+- 可通过 `course_code` + `course_teacher` 查询评论数和平均评分
+
+`course_plus_offerings`
+
+- 当前学期教学班表
+- 可通过 `course_code` 查询所有教学班信息
+- 包含 `schedule_code`，把中文排课文本转成更方便处理的编码
+
+## schedule_code 例子
+
+原始文本：
+
+```text
+星期一第1-2节{1-8周};星期五第1-2节{1-8周}
+```
+
+编码后：
+
+```text
+D1:P1-2:W1-8;D5:P1-2:W1-8
+```
+
+含义：
+
+- `D1` 到 `D7`：星期一到星期日
+- `P1-2`：第 1-2 节
+- `W1-8`：第 1-8 周
+
+## 学习 SQL
+
+打开：
+
+```text
+src/sqlite_basic_usage.ipynb
+```
+
+里面有连接数据库、查询表、筛选、排序、聚合和教学班查询示例。
