@@ -14,13 +14,25 @@
 先生成评论表：
 
 ```bash
-python src/build_simple_reviews_sqlite.py
+python src/ingest_course_community.py
 ```
 
-再导入当前学期教学班：
+再直接抓取 Course+ 并写入当前学期教学班表：
 
 ```bash
-python src/ingest_course_plus.py
+python src/ingest_course_plus.py --semester 2025-2026_1
+```
+
+如果只想导入已经清洗好的 CSV：
+
+```bash
+python src/ingest_course_plus.py --input-csv data/processed/current_term_2025-2026_1/course_plus_offerings_2025-2026_1_cleaned.csv
+```
+
+如果抓取时也想保留 raw/processed CSV：
+
+```bash
+python src/ingest_course_plus.py --semester 2025-2026_1 --save-csv
 ```
 
 ## SQLite 表
