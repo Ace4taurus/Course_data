@@ -300,12 +300,18 @@ def build_timetable(
     unrated_score: float = 0.0,
     max_early_classes: int | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    search_mode: str | None = None,
+    beam_width: int | None = None,
+    per_course_limit: int | None = None,
 ) -> TimetableResult:
     input_config = load_input_config(input_path)
     compulsory_courses, optional_courses = parse_course_groups(input_config)
     requested_courses = compulsory_courses + optional_courses
     if max_early_classes is None:
         max_early_classes = parse_max_early_classes(input_config)
+    search_mode = search_mode if search_mode is not None else input_config.get("search_mode", "exact")
+    beam_width = beam_width if beam_width is not None else int(input_config.get("beam_width", 500))
+    per_course_limit = per_course_limit if per_course_limit is not None else int(input_config.get("per_course_limit", 30))
 
     by_course, warnings = load_offerings(sqlite_path, requested_courses, unrated_score=unrated_score)
     raw_candidate_count = sum(len(offerings) for offerings in by_course.values())
@@ -342,6 +348,9 @@ def build_timetable(
         optional_compressed,
         max_early_classes=max_early_classes,
         progress_callback=progress_callback,
+        search_mode=search_mode,
+        beam_width=beam_width,
+        per_course_limit=per_course_limit,
     )
     compressed_counts = {
         **{course_code: len(offerings) for course_code, offerings in compulsory_compressed.items()},
@@ -371,6 +380,9 @@ def build_timetable(
     selected_by_course = {offering.course_code: offering for offering in selected}
     ordered_selected = [selected_by_course[course_code] for course_code in compulsory_courses if course_code in selected_by_course]
     ordered_selected.extend(selected_by_course[course_code] for course_code in optional_courses if course_code in selected_by_course)
+    if search_mode == "approx":
+        warnings = [*warnings, "Approximate beam search was used; result is feasible but not guaranteed optimal."]
+
     return make_result(
         status="optimal",
         requested_courses=requested_courses,
@@ -436,7 +448,24 @@ def search_best_timetable(
     *,
     max_early_classes: int | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
+    search_mode: str = "exact",
+    beam_width: int = 500,
+    per_course_limit: int = 30,
 ) -> tuple[list[Offering] | None, float | None, float | None, float | None, int]:
+    if search_mode not in {"exact", "approx"}:
+        raise ValueError("search_mode must be 'exact' or 'approx'.")
+    if search_mode == "approx":
+        from sjtu_course_analysis.beam_search_scheduler import search_best_timetable_beam
+
+        return search_best_timetable_beam(
+            compulsory_by_course,
+            optional_by_course,
+            max_early_classes=max_early_classes,
+            progress_callback=progress_callback,
+            beam_width=beam_width,
+            per_course_limit=per_course_limit,
+        )
+
     if not compulsory_by_course and not optional_by_course:
         return [], 0.0, 0.0, None, 1
 

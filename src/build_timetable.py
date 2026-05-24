@@ -26,27 +26,75 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--unrated-score", type=float, default=0.0)
     parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--approx", action="store_true", help="Use approximate beam search instead of exact DFS.")
+    parser.add_argument("--beam-width", type=int, default=None)
+    parser.add_argument("--per-course-limit", type=int, default=None)
     parser.add_argument("--t", action="store_true", help="Debug mode: read max_early_classes from input JSON without prompting.")
     return parser.parse_args()
 
 
-def read_max_early_classes(input_path: Path, debug_mode: bool) -> int | None:
+def read_timetable_settings(input_path: Path, debug_mode: bool) -> dict[str, int | str | None]:
+    input_config = load_input_config(input_path)
+    search_mode = input_config.get("search_mode", "exact")
+    if search_mode not in {"exact", "approx"}:
+        raise ValueError("search_mode must be 'exact' or 'approx'.")
+    settings: dict[str, int | str | None] = {
+        "max_early_classes": parse_max_early_classes(input_config),
+        "search_mode": search_mode,
+        "beam_width": int(input_config.get("beam_width", 500)),
+        "per_course_limit": int(input_config.get("per_course_limit", 30)),
+    }
     if debug_mode:
-        return parse_max_early_classes(load_input_config(input_path))
+        return settings
 
+    print(c("当前排课设置：", "cyan", True))
+    print(f"  搜索模式: {settings['search_mode']} ({'近似 beam search' if settings['search_mode'] == 'approx' else '精确 DFS'})")
+    print(f"  早八上限: {settings['max_early_classes'] if settings['max_early_classes'] is not None else '不限制'}")
+    print(f"  beam_width: {settings['beam_width']}")
+    print(f"  per_course_limit: {settings['per_course_limit']}")
+    value = input(c("是否修改这些设置？直接回车表示不修改，输入 y 修改：", "cyan", True)).strip().lower()
+    if value not in {"y", "yes", "是"}:
+        return settings
+
+    settings["search_mode"] = read_search_mode(str(settings["search_mode"]))
+    current_early = settings["max_early_classes"] if settings["max_early_classes"] is not None else "不限制"
+    settings["max_early_classes"] = read_optional_nonnegative_int(
+        f"早八课程数量最多允许多少门？直接回车使用当前值 {current_early}，输入 none 表示不限制：",
+        default=settings["max_early_classes"],
+        allow_none_text=True,
+    )
+    if settings["search_mode"] == "approx":
+        settings["beam_width"] = read_optional_nonnegative_int("beam_width 设置为多少？直接回车使用 500：", default=500)
+        settings["per_course_limit"] = read_optional_nonnegative_int("per_course_limit 设置为多少？直接回车使用 30：", default=30)
+    return settings
+
+
+def read_search_mode(current: str) -> str:
     while True:
-        value = input(c("早八课程数量最多允许多少门？直接回车表示不限制：", "cyan", True)).strip()
+        value = input(c(f"搜索模式 exact/approx？直接回车使用当前值 {current}：", "cyan", True)).strip().lower()
         if not value:
+            value = current
+        if value in {"exact", "approx"}:
+            return value
+        print(c("请输入 exact 或 approx。", "yellow", True))
+
+
+def read_optional_nonnegative_int(prompt: str, *, default: int | None = None, allow_none_text: bool = False) -> int | None:
+    while True:
+        value = input(c(prompt, "cyan", True)).strip().lower()
+        if not value:
+            return default
+        if allow_none_text and value in {"none", "no", "不限", "不限制"}:
             return None
         try:
-            limit = int(value)
+            result = int(value)
         except ValueError:
-            print(c("请输入非负整数，或直接回车表示不限制。", "yellow", True))
+            print(c("请输入非负整数。", "yellow", True))
             continue
-        if limit < 0:
-            print(c("请输入非负整数，或直接回车表示不限制。", "yellow", True))
+        if result < 0:
+            print(c("请输入非负整数。", "yellow", True))
             continue
-        return limit
+        return result
 
 
 def make_progress_bar(enabled: bool):
@@ -109,14 +157,18 @@ def review_loop(sqlite_path: Path, result) -> None:
 
 def main() -> None:
     args = parse_args()
-    max_early_classes = read_max_early_classes(args.input, args.t)
+    settings = read_timetable_settings(args.input, args.t or args.as_json)
+    search_mode = "approx" if args.approx else str(settings["search_mode"])
     result = build_timetable(
         args.input,
         args.sqlite,
         allow_missing=args.allow_missing,
         unrated_score=args.unrated_score,
-        max_early_classes=max_early_classes,
+        max_early_classes=settings["max_early_classes"],
         progress_callback=make_progress_bar(not args.as_json),
+        search_mode=search_mode,
+        beam_width=args.beam_width if args.beam_width is not None else int(settings["beam_width"]),
+        per_course_limit=args.per_course_limit if args.per_course_limit is not None else int(settings["per_course_limit"]),
     )
     if args.as_json:
         print(json.dumps(result_to_dict(result), ensure_ascii=False, indent=2))
