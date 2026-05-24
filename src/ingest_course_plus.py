@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from sjtu_course_analysis.course_plus import fetch_course_plus_data, normalize_course_plus
+from sjtu_course_analysis.course_plus import (
+    DEFAULT_COURSE_PLUS_SEMESTER,
+    course_plus_table_name,
+    fetch_course_plus_data,
+    normalize_course_plus,
+    quote_sql_identifier,
+)
 
 
 COURSE_PLUS_COLUMNS = [
@@ -31,6 +37,7 @@ COURSE_PLUS_COLUMNS = [
 DEFAULT_INPUT_CSV = Path("data/processed/current_term_2025-2026_1/course_plus_offerings_2025-2026_1_cleaned.csv")
 DEFAULT_SQLITE = Path("data/processed/course_reviews_simple.sqlite")
 DEFAULT_OUTPUT_ROOT = Path(".")
+DEFAULT_SEMESTER = DEFAULT_COURSE_PLUS_SEMESTER
 DAY_CODES = {
     "一": "D1",
     "二": "D2",
@@ -48,12 +55,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Fetch or ingest Course+ offerings and write them into the simple SQLite database."
     )
-    source = parser.add_mutually_exclusive_group()
-    source.add_argument(
+    parser.add_argument(
         "--semester",
-        help="Fetch this Course+ semester key directly, for example 2025-2026_1.",
+        help="Course+ semester key, for example 2025-2026_1. Fetches online unless --input-csv is also set.",
     )
-    source.add_argument(
+    parser.add_argument(
         "--input-csv",
         type=Path,
         help=f"Load an already cleaned Course+ CSV. Defaults to {DEFAULT_INPUT_CSV} when --semester is omitted.",
@@ -74,9 +80,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def ingest_course_plus(input_csv: Path, sqlite_path: Path) -> int:
+def ingest_course_plus(input_csv: Path, sqlite_path: Path, semester: str) -> int:
     offerings = load_offerings(input_csv)
-    write_offerings_sqlite(offerings, sqlite_path)
+    write_offerings_sqlite(offerings, sqlite_path, semester)
     return len(offerings)
 
 
@@ -95,19 +101,21 @@ def fetch_and_ingest_course_plus(
         save_course_plus_csvs(raw_frame, normalized_frame, semester, output_root)
 
     offerings = frame_to_offerings(normalized_frame)
-    write_offerings_sqlite(offerings, sqlite_path)
+    write_offerings_sqlite(offerings, sqlite_path, semester)
     return len(offerings)
 
 
-def write_offerings_sqlite(offerings: list[dict[str, object]], sqlite_path: Path) -> None:
+def write_offerings_sqlite(offerings: list[dict[str, object]], sqlite_path: Path, semester: str) -> None:
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    table_name = course_plus_table_name(semester)
+    quoted_table_name = quote_sql_identifier(table_name)
 
     with sqlite3.connect(sqlite_path) as connection:
-        connection.execute("DROP TABLE IF EXISTS course_plus_offerings")
-        create_table(connection)
+        create_table(connection, table_name)
+        connection.execute(f"DELETE FROM {quoted_table_name}")
         connection.executemany(
-            """
-            INSERT INTO course_plus_offerings (
+            f"""
+            INSERT INTO {quoted_table_name} (
                 course_code, course_name, department, teacher, credits, enrollment,
                 class_capacity, teaching_class, campus, course_type, schedule_text,
                 schedule_code, has_virtual_schedule, is_weekend_course, time_bucket
@@ -115,7 +123,7 @@ def write_offerings_sqlite(offerings: list[dict[str, object]], sqlite_path: Path
             """,
             ([offering[column] for column in COURSE_PLUS_COLUMNS_WITH_CODE] for offering in offerings),
         )
-        create_indexes(connection)
+        create_indexes(connection, table_name)
 
 
 def frame_to_offerings(frame: pd.DataFrame) -> list[dict[str, object]]:
@@ -185,10 +193,11 @@ def encode_schedule(schedule_text: str) -> str:
     return ";".join(entries)
 
 
-def create_table(connection: sqlite3.Connection) -> None:
+def create_table(connection: sqlite3.Connection, table_name: str) -> None:
+    quoted_table_name = quote_sql_identifier(table_name)
     connection.execute(
-        """
-        CREATE TABLE course_plus_offerings (
+        f"""
+        CREATE TABLE IF NOT EXISTS {quoted_table_name} (
             course_code TEXT,
             course_name TEXT,
             department TEXT,
@@ -209,10 +218,29 @@ def create_table(connection: sqlite3.Connection) -> None:
     )
 
 
-def create_indexes(connection: sqlite3.Connection) -> None:
-    connection.execute("CREATE INDEX idx_course_plus_offerings_course_code ON course_plus_offerings(course_code)")
-    connection.execute("CREATE INDEX idx_course_plus_offerings_teaching_class ON course_plus_offerings(teaching_class)")
-    connection.execute("CREATE INDEX idx_course_plus_offerings_schedule_code ON course_plus_offerings(schedule_code)")
+def create_indexes(connection: sqlite3.Connection, table_name: str) -> None:
+    quoted_table_name = quote_sql_identifier(table_name)
+    connection.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_course_code ON {quoted_table_name}(course_code)"
+    )
+    connection.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_teaching_class ON {quoted_table_name}(teaching_class)"
+    )
+    connection.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_schedule_code ON {quoted_table_name}(schedule_code)"
+    )
+
+
+def resolve_semester(args: argparse.Namespace) -> str:
+    return args.semester or DEFAULT_SEMESTER
+
+
+def resolve_input_csv(args: argparse.Namespace) -> Path:
+    return args.input_csv or DEFAULT_INPUT_CSV
+
+
+def should_fetch_course_plus(args: argparse.Namespace) -> bool:
+    return args.semester is not None and args.input_csv is None
 
 
 def clean_text(value: object) -> str:
@@ -249,21 +277,23 @@ def parse_int_or_float(value: object) -> int | float | None:
 
 def main() -> None:
     args = parse_args()
-    if args.semester:
+    semester = resolve_semester(args)
+    if should_fetch_course_plus(args):
         row_count = fetch_and_ingest_course_plus(
-            args.semester,
+            semester,
             args.sqlite,
             timeout=args.timeout,
             save_csv=args.save_csv,
             output_root=args.output_root,
         )
-        print(f"Fetched Course+ semester: {args.semester}")
+        print(f"Fetched Course+ semester: {semester}")
     else:
-        input_csv = args.input_csv or DEFAULT_INPUT_CSV
-        row_count = ingest_course_plus(input_csv, args.sqlite)
+        input_csv = resolve_input_csv(args)
+        row_count = ingest_course_plus(input_csv, args.sqlite, semester)
         print(f"Loaded Course+ CSV: {input_csv}")
 
-    print(f"Rows written to course_plus_offerings: {row_count}")
+    print(f"Refreshed Course+ table: {course_plus_table_name(semester)}")
+    print(f"Rows written: {row_count}")
     print(f"SQLite database updated: {args.sqlite}")
 
 

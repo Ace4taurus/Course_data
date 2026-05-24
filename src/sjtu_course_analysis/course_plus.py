@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -7,6 +8,21 @@ import requests
 
 
 COURSE_PLUS_URL = "https://geek.sjtu.edu.cn/course-plus-data/lessonData_{semester}.json"
+COURSE_PLUS_TABLE_PREFIX = "course_plus_offerings"
+DEFAULT_COURSE_PLUS_SEMESTER = "2025-2026_1"
+
+
+def course_plus_table_name(semester: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z_]+", "_", semester).strip("_")
+    if not normalized:
+        raise ValueError("Semester cannot be empty.")
+    return f"{COURSE_PLUS_TABLE_PREFIX}_{normalized}"
+
+
+def quote_sql_identifier(identifier: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][0-9A-Za-z_]*", identifier):
+        raise ValueError(f"Unsafe SQL identifier: {identifier}")
+    return f'"{identifier}"'
 
 
 def fetch_course_plus_data(semester: str, timeout: int = 60) -> pd.DataFrame:

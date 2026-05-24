@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the highest-rated non-conflicting timetable.")
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--sqlite", type=Path, default=DEFAULT_SQLITE)
+    parser.add_argument("--semester", help="Only use Course+ offerings from this semester, for example 2025-2026_1.")
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--unrated-score", type=float, default=0.0)
     parser.add_argument("--json", action="store_true", dest="as_json")
@@ -211,6 +212,7 @@ def main() -> None:
         search_mode=search_mode,
         beam_width=args.beam_width if args.beam_width is not None else int(settings["beam_width"]),
         per_course_limit=args.per_course_limit if args.per_course_limit is not None else int(settings["per_course_limit"]),
+        semester=args.semester,
     )
     if args.as_json:
         print(json.dumps(result_to_dict(result), ensure_ascii=False, indent=2))
