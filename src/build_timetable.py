@@ -4,12 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+from sjtu_course_analysis.presentation import c, format_result, format_reviews
 from sjtu_course_analysis.scheduler import (
-    c,
     build_timetable,
     fetch_reviews,
-    format_result,
-    format_reviews,
     load_input_config,
     parse_max_early_classes,
     result_to_dict,
