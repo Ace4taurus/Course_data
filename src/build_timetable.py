@@ -69,7 +69,12 @@ def review_loop(sqlite_path: Path, result) -> None:
     if not result.selected:
         return
 
+    show_result = False
     while True:
+        if show_result:
+            print("")
+            print(format_result(result, color=True))
+        show_result = True
         try:
             value = input(c("请输入上方选课结果中的序号查看评论，或直接回车退出：", "cyan", True)).strip()
         except EOFError:

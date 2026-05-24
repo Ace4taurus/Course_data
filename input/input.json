@@ -12,8 +12,16 @@
     "optional": [
         "BUSS2515",
         "BUSS2302",
-        "MATH1201",
-        "MATH1205",
-        "BUSS1302"
+        "BUSS1302",
+        "BUSS2613",
+        "BUSS3607",
+        "ECON3604",
+        "ECON3605",
+        "CS3311",
+        "CS4314",
+        "MGTS3604",
+        "MGTS3605",
+        "ECON3503",
+        "ECON3501"
     ]
 }

@@ -15,6 +15,9 @@ COLORS = {
     "magenta": "\033[35m",
     "header": "\033[1;36m",
     "index": "\033[1;33m",
+    "white_on_green": "\033[1;37;42m",
+    "white_on_yellow": "\033[1;37;43m",
+    "white_on_red": "\033[1;37;41m",
 }
 
 
@@ -32,6 +35,35 @@ def _color_rating(text: str, rating: float | None, enabled: bool) -> str:
     if rating >= 3.5:
         return c(text, "yellow", enabled)
     return c(text, "red", enabled)
+
+
+def _timetable_bucket(text: str, style: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{COLORS[f'white_on_{style}']}{text}{COLORS['reset']}"
+
+
+def format_timetable_grid(result: TimetableResult, *, color: bool = False) -> str:
+    occupied: dict[tuple[int, int], tuple[int, set[int]]] = {}
+    for index, offering in enumerate(result.selected, start=1):
+        for slot in offering.slots:
+            occupied.setdefault((slot.day, slot.period), (index, set()))[1].add(slot.week)
+
+    full_weeks = set(range(1, 17))
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    lines = [c("Timetable:", "header", color), "节次  " + "  ".join(f"{day:>3}" for day in days)]
+    for period in range(1, 14):
+        buckets = []
+        for day in range(1, 8):
+            item = occupied.get((day, period))
+            if item is None:
+                buckets.append(_timetable_bucket("   ", "green", color))
+                continue
+            index, weeks = item
+            style = "red" if weeks >= full_weeks else "yellow"
+            buckets.append(_timetable_bucket(f"{index:^3}", style, color))
+        lines.append(f"{period:>2}    " + "  ".join(buckets))
+    return "\n".join(lines)
 
 
 def format_reviews(reviews: list[Review], *, page: int, page_size: int = 10, color: bool = False) -> str:
@@ -87,6 +119,8 @@ def format_result(result: TimetableResult, *, color: bool = False) -> str:
         lines.append(f"{c('Compressed counts:', 'dim', color)} {counts}")
 
     if result.selected:
+        lines.append("")
+        lines.append(format_timetable_grid(result, color=color))
         lines.append("")
         lines.append(c("Selected offerings:", "header", color))
         for index, offering in enumerate(result.selected, start=1):
