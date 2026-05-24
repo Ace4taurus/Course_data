@@ -14,13 +14,27 @@
 先生成评论表：
 
 ```bash
-python src/build_simple_reviews_sqlite.py
+python src/ingest_course_community.py
 ```
 
-再导入当前学期教学班：
+再直接抓取 Course+ 并写入当前学期教学班表：
 
 ```bash
-python src/ingest_course_plus.py
+python src/ingest_course_plus.py --semester 2025-2026_1
+```
+
+每个学期会写入独立表，例如 `2025-2026_1` 写入 `course_plus_offerings_2025_2026_1`。重复导入同一学期时，只会清空并重写这个学期对应的表，不会覆盖其他学期的表。
+
+如果只想导入已经清洗好的 CSV：
+
+```bash
+python src/ingest_course_plus.py --input-csv data/processed/current_term_2025-2026_1/course_plus_offerings_2025-2026_1_cleaned.csv --semester 2025-2026_1
+```
+
+如果抓取时也想保留 raw/processed CSV：
+
+```bash
+python src/ingest_course_plus.py --semester 2025-2026_1 --save-csv
 ```
 
 ## SQLite 表
@@ -35,9 +49,9 @@ python src/ingest_course_plus.py
 - 评论评分汇总表
 - 可通过 `course_code` + `course_teacher` 查询评论数和平均评分
 
-`course_plus_offerings`
+`course_plus_offerings_<学期>`
 
-- 当前学期教学班表
+- 每个学期一张教学班表，例如 `course_plus_offerings_2025_2026_1`
 - 可通过 `course_code` 查询所有教学班信息
 - 包含 `schedule_code`，把中文排课文本转成更方便处理的编码
 

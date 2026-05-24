@@ -8,6 +8,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sjtu_course_analysis.course_plus import (
+    DEFAULT_COURSE_PLUS_SEMESTER,
+    course_plus_table_name,
+    quote_sql_identifier,
+)
+
 
 @dataclass(frozen=True, order=True)
 class Slot:
@@ -210,13 +216,23 @@ def parse_int_token(text: str) -> int:
     return int(match.group(0))
 
 
-def load_offerings(sqlite_path: Path, course_codes: list[str], unrated_score: float = 0.0) -> tuple[dict[str, list[Offering]], list[str]]:
+def load_offerings(
+    sqlite_path: Path,
+    course_codes: list[str],
+    unrated_score: float = 0.0,
+    semester: str | None = None,
+) -> tuple[dict[str, list[Offering]], list[str]]:
     by_course = {course_code: [] for course_code in course_codes}
     warnings: list[str] = []
     if not course_codes:
         return by_course, warnings
 
     placeholders = ",".join("?" for _ in course_codes)
+    target_semester = semester or DEFAULT_COURSE_PLUS_SEMESTER
+    table_name = course_plus_table_name(target_semester)
+    params: list[str] = list(course_codes)
+    quoted_table_name = quote_sql_identifier(table_name)
+
     query = f"""
         SELECT
             o.course_code,
@@ -228,7 +244,7 @@ def load_offerings(sqlite_path: Path, course_codes: list[str], unrated_score: fl
             o.schedule_code,
             r.avg_rating,
             r.review_count
-        FROM course_plus_offerings AS o
+        FROM {quoted_table_name} AS o
         LEFT JOIN course_teacher_rating_summary AS r
           ON r.course_code = o.course_code
          AND r.course_teacher = o.teacher
@@ -237,7 +253,7 @@ def load_offerings(sqlite_path: Path, course_codes: list[str], unrated_score: fl
     """
 
     with sqlite3.connect(sqlite_path) as connection:
-        rows = connection.execute(query, course_codes).fetchall()
+        rows = connection.execute(query, params).fetchall()
 
     for row in rows:
         course_code, course_name, credits, teacher, teaching_class, schedule_text, schedule_code, avg_rating, review_count = row
@@ -303,6 +319,7 @@ def build_timetable(
     search_mode: str | None = None,
     beam_width: int | None = None,
     per_course_limit: int | None = None,
+    semester: str | None = None,
 ) -> TimetableResult:
     input_config = load_input_config(input_path)
     compulsory_courses, optional_courses = parse_course_groups(input_config)
@@ -312,8 +329,9 @@ def build_timetable(
     search_mode = search_mode if search_mode is not None else input_config.get("search_mode", "exact")
     beam_width = beam_width if beam_width is not None else int(input_config.get("beam_width", 500))
     per_course_limit = per_course_limit if per_course_limit is not None else int(input_config.get("per_course_limit", 30))
+    semester = semester if semester is not None else input_config.get("semester", DEFAULT_COURSE_PLUS_SEMESTER)
 
-    by_course, warnings = load_offerings(sqlite_path, requested_courses, unrated_score=unrated_score)
+    by_course, warnings = load_offerings(sqlite_path, requested_courses, unrated_score=unrated_score, semester=semester)
     raw_candidate_count = sum(len(offerings) for offerings in by_course.values())
     missing_compulsory_courses = [course_code for course_code in compulsory_courses if not by_course[course_code]]
     missing_optional_courses = [course_code for course_code in optional_courses if not by_course[course_code]]
