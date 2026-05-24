@@ -20,6 +20,7 @@ def fetch_course_plus_data(semester: str, timeout: int = 60) -> pd.DataFrame:
 
 def normalize_course_plus(frame: pd.DataFrame) -> pd.DataFrame:
     working = frame.copy()
+    working["raw_teaching_class"] = working["jxbmc"].astype(str)
     working["course_code"] = working["kch"].astype(str)
     working["course_name"] = working["kcmc"].astype(str)
     working["department"] = working["kkxy"].astype(str)
@@ -27,13 +28,47 @@ def normalize_course_plus(frame: pd.DataFrame) -> pd.DataFrame:
     working["credits"] = pd.to_numeric(working["xf"], errors="coerce")
     working["enrollment"] = pd.to_numeric(working["xkrs"], errors="coerce").fillna(0)
     working["class_capacity"] = pd.to_numeric(working["jxbrs"], errors="coerce")
-    working["teaching_class"] = working["jxbmc"].astype(str)
+    working["teaching_class"] = working["raw_teaching_class"].str[:-3]
     working["campus"] = working["xqmc"].astype(str)
     working["course_type"] = working["kcxzmc"].astype(str)
     working["schedule_text"] = working["sksj"].astype(str)
     working["has_virtual_schedule"] = working.get("xkbz", "").fillna("").astype(str).str.contains("虚拟排课")
     working["is_weekend_course"] = working["schedule_text"].str.contains("星期六|星期日")
     working["time_bucket"] = working["schedule_text"].map(_infer_time_bucket)
+    working = working.drop_duplicates(
+        subset=[
+            "course_code",
+            "course_name",
+            "department",
+            "teacher",
+            "credits",
+            "enrollment",
+            "class_capacity",
+            "raw_teaching_class",
+            "campus",
+            "course_type",
+            "schedule_text",
+            "has_virtual_schedule",
+            "is_weekend_course",
+            "time_bucket",
+        ]
+    )
+    working = (
+        working.groupby(["course_code", "teacher", "teaching_class", "schedule_text"], as_index=False)
+        .agg(
+            course_name=("course_name", "first"),
+            department=("department", _mode_or_first),
+            credits=("credits", "median"),
+            enrollment=("enrollment", "sum"),
+            class_capacity=("class_capacity", "sum"),
+            campus=("campus", _mode_or_first),
+            course_type=("course_type", _mode_or_first),
+            has_virtual_schedule=("has_virtual_schedule", "max"),
+            is_weekend_course=("is_weekend_course", "max"),
+            time_bucket=("time_bucket", "first"),
+        )
+        .sort_values(["department", "course_code", "teacher", "teaching_class", "schedule_text"])
+    )
     return working[
         [
             "course_code",
@@ -61,7 +96,7 @@ def aggregate_courses(frame: pd.DataFrame) -> pd.DataFrame:
             course_name=("course_name", "first"),
             department=("department", _mode_or_first),
             credits=("credits", "median"),
-            offering_count=("teaching_class", "nunique"),
+            offering_count=("teaching_class", "count"),
             teacher_count=("teacher", "nunique"),
             total_enrollment=("enrollment", "sum"),
             avg_class_capacity=("class_capacity", "mean"),
@@ -94,4 +129,3 @@ def _infer_time_bucket(schedule_text: str) -> str:
     if "第5" in schedule_text or "第6" in schedule_text or "第7" in schedule_text or "第8" in schedule_text:
         return "afternoon"
     return "mixed"
-
